@@ -30,13 +30,13 @@ import { Exam, Room, Submission, StudentInfo, User, Role, Question } from '../ty
 
 // ============ FIREBASE CONFIG ============
 const firebaseConfig = {
-  apiKey: "AIzaSyDf7Dhnd3AWaODDoB-m_ujMr41NlmwVsbA",
-  authDomain: "stuchat-project.firebaseapp.com",
-  projectId: "stuchat-project",
-  storageBucket: "stuchat-project.firebasestorage.app",
-  messagingSenderId: "473666271454",
-  appId: "1:473666271454:web:7e74020e1e643bfaaeaa4f",
-  measurementId: "G-VH1FCP9HZ1"
+  apiKey: "AIzaSyCaOg2WjE07yqzW75lvQ74pKVODtKCjK6U",
+  authDomain: "dethitienganh-3a359.firebaseapp.com",
+  projectId: "dethitienganh-3a359",
+  storageBucket: "dethitienganh-3a359.firebasestorage.app",
+  messagingSenderId: "384518159133",
+  appId: "1:384518159133:web:c00cbb29f3528af5373ff4",
+  measurementId: "G-VD2ZMH4NMM"
 };
 
 // Initialize Firebase
