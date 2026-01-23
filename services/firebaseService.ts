@@ -23,7 +23,10 @@ import {
   onSnapshot,
   serverTimestamp,
   Timestamp,
-  DocumentData
+  DocumentData,
+  // ✅ thêm lại để tương thích code cũ (TeacherDashboard thường dùng)
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { Exam, Room, Submission, User, Role, Question, AccessMode } from '../types';
 
@@ -66,12 +69,6 @@ const buildUserFromFirebase = (firebaseUser: FirebaseUser, fallbackRole: Role): 
   createdAt: new Date()
 });
 
-/**
- * Đảm bảo user doc tồn tại để tránh app bị lỗi khi code cần đọc /users/{uid}
- * - Với giáo viên: role TEACHER/ADMIN
- * - Với học sinh: role STUDENT
- * - Với khách: role GUEST (optional)
- */
 const ensureUserDoc = async (user: User, options?: { force?: boolean }): Promise<User> => {
   const userRef = doc(db, 'users', user.id);
   const snap = await getDoc(userRef);
@@ -89,7 +86,6 @@ const ensureUserDoc = async (user: User, options?: { force?: boolean }): Promise
     return user;
   }
 
-  // Nếu đã tồn tại, trả về từ DB (ưu tiên dữ liệu DB)
   const data = snap.data();
   return {
     id: snap.id,
@@ -107,11 +103,6 @@ const ensureUserDoc = async (user: User, options?: { force?: boolean }): Promise
 
 // ============ AUTH FUNCTIONS ============
 
-/**
- * ✅ GIÁO VIÊN/ADMIN đăng nhập Google (GIỮ NGUYÊN như app hiện tại)
- * - User đầu tiên: ADMIN + auto approve
- * - Các user sau: TEACHER + chờ duyệt (isApproved=false)
- */
 export const signInWithGoogle = async (): Promise<User | null> => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
@@ -127,7 +118,7 @@ export const signInWithGoogle = async (): Promise<User | null> => {
       const newUser: User = {
         ...buildUserFromFirebase(firebaseUser, isFirstUser ? Role.ADMIN : Role.TEACHER),
         role: isFirstUser ? Role.ADMIN : Role.TEACHER,
-        isApproved: isFirstUser, // admin đầu tiên auto approve
+        isApproved: isFirstUser,
         createdAt: new Date()
       };
 
@@ -155,12 +146,6 @@ export const signInWithGoogle = async (): Promise<User | null> => {
   }
 };
 
-/**
- * ✅ HỌC SINH đăng nhập Gmail (THEO APP TOÁN)
- * - role = STUDENT
- * - mặc định isApproved=false (chờ GV/ADMIN duyệt)
- * - Nếu user doc đã có: giữ nguyên role/isApproved theo DB
- */
 export const signInStudentWithGoogle = async (): Promise<User | null> => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
@@ -203,21 +188,14 @@ export const signInStudentWithGoogle = async (): Promise<User | null> => {
 export const signOutUser = () => signOut(auth);
 
 // ===== Anonymous/Guest sign-in =====
-// Đảm bảo có đăng nhập (Anonymous) trước khi ghi Firestore (đặc biệt khi tạo submission/counter)
 let anonymousSignInPromise: Promise<void> | null = null;
 
-/**
- * Đăng nhập anonymous (khách).
- * Giữ nguyên API cũ `ensureSignedIn` để không làm hỏng code hiện tại.
- */
 export const ensureGuestSignedIn = async (): Promise<void> => {
   if (auth.currentUser) return;
 
   if (!anonymousSignInPromise) {
     anonymousSignInPromise = signInAnonymously(auth)
       .then(async (cred) => {
-        // Optional: tạo user doc tối thiểu để tránh chỗ nào đó cần /users/{uid}
-        // Rules English cho phép read true + create cần auth (anonymous có auth) => ok
         const u = cred.user;
         const guestUser: User = {
           id: u.uid,
@@ -237,16 +215,14 @@ export const ensureGuestSignedIn = async (): Promise<void> => {
   await anonymousSignInPromise;
 };
 
-// Backward compatible alias (file khác đang gọi ensureSignedIn)
+// Backward compatible
 export const ensureSignedIn = ensureGuestSignedIn;
 
-// Kiểm tra có user nào trong hệ thống chưa
 export const hasAnyUsers = async (): Promise<boolean> => {
   const snapshot = await getDocs(collection(db, 'users'));
   return !snapshot.empty;
 };
 
-// Kiểm tra user có phải admin không (dựa vào role trong database)
 export const isUserAdmin = async (userId: string): Promise<boolean> => {
   const userRef = doc(db, 'users', userId);
   const userSnap = await getDoc(userRef);
@@ -282,7 +258,7 @@ export const getCurrentUser = async (): Promise<User | null> => {
   return null;
 };
 
-// ============ USER MANAGEMENT (Admin/Teacher) ============
+// ============ USER MANAGEMENT ============
 
 export const getAllUsers = async (): Promise<User[]> => {
   const snapshot = await getDocs(collection(db, 'users'));
@@ -338,19 +314,11 @@ export const updateUserRole = async (userId: string, role: Role): Promise<void> 
 // ============ EXAM FUNCTIONS ============
 
 export const createExam = async (examData: Omit<Exam, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> => {
-  console.log('📝 createExam called with:', {
-    title: examData.title,
-    createdBy: examData.createdBy,
-    questionsCount: examData.questions?.length
-  });
-
   const examRef = await addDoc(collection(db, 'exams'), {
     ...examData,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
-
-  console.log('📝 Exam created with ID:', examRef.id);
   return examRef.id;
 };
 
@@ -378,11 +346,8 @@ export const getExam = async (examId: string): Promise<Exam | null> => {
 };
 
 export const getExamsByTeacher = async (teacherId: string): Promise<Exam[]> => {
-  console.log('📚 getExamsByTeacher called with teacherId:', teacherId);
-
   const q = query(collection(db, 'exams'), where('createdBy', '==', teacherId));
   const snapshot = await getDocs(q);
-  console.log('📚 Found exams:', snapshot.size);
 
   const exams = snapshot.docs.map((docSnap) => {
     const data = docSnap.data();
@@ -414,9 +379,7 @@ export const deleteExam = async (examId: string): Promise<void> => {
 const generateRoomCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
   return code;
 };
 
@@ -432,7 +395,6 @@ export const createRoom = async (roomData: {
   teacherId: string;
   teacherName: string;
   timeLimit: number;
-  // ✅ thêm: accessMode + classId/className (optional)
   accessMode?: AccessMode;
   classId?: string;
   className?: string;
@@ -456,17 +418,14 @@ export const createRoom = async (roomData: {
     examTitle: roomData.examTitle,
     teacherId: roomData.teacherId,
     teacherName: roomData.teacherName,
-
-    // ✅ default: nếu không truyền => 'public' để giữ behavior cũ của English app (khách vào được)
     accessMode: roomData.accessMode ?? 'public',
     classId: roomData.classId,
     className: roomData.className,
-
     status: 'waiting',
     timeLimit: roomData.timeLimit,
     allowLateJoin: roomData.settings?.allowLateJoin ?? true,
     showResultAfterSubmit: roomData.settings?.showResultAfterSubmit ?? true,
-    shuffleQuestions: roomData.settings?.shuffleQuestions ?? false,
+    shuffleQuestions: roomData.settings?.shuffleQuestions ?? true,
     maxAttempts: roomData.settings?.maxAttempts ?? 1,
     totalStudents: 0,
     submittedCount: 0,
@@ -483,41 +442,34 @@ export const createRoom = async (roomData: {
   return { id: roomRef.id, ...room };
 };
 
-const parseRoomData = (id: string, data: DocumentData): Room => {
-  return {
-    id,
-    code: data.code || '',
-    examId: data.examId || '',
-    examTitle: data.examTitle || '',
-    teacherId: data.teacherId || '',
-    teacherName: data.teacherName || '',
-
-    // ✅ parse accessMode/class
-    accessMode: (data.accessMode as AccessMode | undefined) ?? 'public',
-    classId: data.classId,
-    className: data.className,
-
-    status: data.status || 'waiting',
-    startTime: toDate(data.startTime),
-    endTime: toDate(data.endTime),
-    timeLimit: data.timeLimit || 45,
-    allowLateJoin: data.allowLateJoin ?? true,
-    showResultAfterSubmit: data.showResultAfterSubmit ?? true,
-    shuffleQuestions: data.shuffleQuestions ?? false,
-    maxAttempts: data.maxAttempts ?? 1,
-    totalStudents: data.totalStudents || 0,
-    submittedCount: data.submittedCount || 0,
-    createdAt: toDate(data.createdAt),
-    updatedAt: toDate(data.updatedAt)
-  };
-};
+const parseRoomData = (id: string, data: DocumentData): Room => ({
+  id,
+  code: data.code || '',
+  examId: data.examId || '',
+  examTitle: data.examTitle || '',
+  teacherId: data.teacherId || '',
+  teacherName: data.teacherName || '',
+  accessMode: (data.accessMode as AccessMode | undefined) ?? 'public',
+  classId: data.classId,
+  className: data.className,
+  status: data.status || 'waiting',
+  startTime: toDate(data.startTime),
+  endTime: toDate(data.endTime),
+  timeLimit: data.timeLimit || 45,
+  allowLateJoin: data.allowLateJoin ?? true,
+  showResultAfterSubmit: data.showResultAfterSubmit ?? true,
+  shuffleQuestions: data.shuffleQuestions ?? false,
+  maxAttempts: data.maxAttempts ?? 1,
+  totalStudents: data.totalStudents || 0,
+  submittedCount: data.submittedCount || 0,
+  createdAt: toDate(data.createdAt),
+  updatedAt: toDate(data.updatedAt)
+});
 
 export const getRoomByCode = async (code: string): Promise<Room | null> => {
   const q = query(collection(db, 'rooms'), where('code', '==', code.toUpperCase()));
   const snapshot = await getDocs(q);
-
   if (snapshot.empty) return null;
-
   const docSnap = snapshot.docs[0];
   return parseRoomData(docSnap.id, docSnap.data());
 };
@@ -525,19 +477,13 @@ export const getRoomByCode = async (code: string): Promise<Room | null> => {
 export const getRoom = async (roomId: string): Promise<Room | null> => {
   const roomRef = doc(db, 'rooms', roomId);
   const roomSnap = await getDoc(roomRef);
-
-  if (roomSnap.exists()) {
-    return parseRoomData(roomSnap.id, roomSnap.data());
-  }
-  return null;
+  if (!roomSnap.exists()) return null;
+  return parseRoomData(roomSnap.id, roomSnap.data());
 };
 
 export const getRoomsByTeacher = async (teacherId: string): Promise<Room[]> => {
-  console.log('🏠 getRoomsByTeacher called with teacherId:', teacherId);
-
   const q = query(collection(db, 'rooms'), where('teacherId', '==', teacherId));
   const snapshot = await getDocs(q);
-  console.log('🏠 Found rooms:', snapshot.size);
 
   const rooms = snapshot.docs.map((docSnap) => parseRoomData(docSnap.id, docSnap.data()));
   rooms.sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0));
@@ -546,27 +492,16 @@ export const getRoomsByTeacher = async (teacherId: string): Promise<Room[]> => {
 
 export const updateRoomStatus = async (roomId: string, status: Room['status']): Promise<void> => {
   const roomRef = doc(db, 'rooms', roomId);
-  const updateData: Record<string, unknown> = {
-    status,
-    updatedAt: serverTimestamp()
-  };
-
-  if (status === 'active') {
-    updateData.startTime = serverTimestamp();
-  } else if (status === 'closed') {
-    updateData.endTime = serverTimestamp();
-  }
-
+  const updateData: Record<string, unknown> = { status, updatedAt: serverTimestamp() };
+  if (status === 'active') updateData.startTime = serverTimestamp();
+  if (status === 'closed') updateData.endTime = serverTimestamp();
   await updateDoc(roomRef, updateData);
 };
 
 export const deleteRoom = async (roomId: string): Promise<void> => {
   const q = query(collection(db, 'submissions'), where('roomId', '==', roomId));
   const snapshot = await getDocs(q);
-
-  const deletePromises = snapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
-  await Promise.all(deletePromises);
-
+  await Promise.all(snapshot.docs.map((d) => deleteDoc(d.ref)));
   await deleteDoc(doc(db, 'rooms', roomId));
 };
 
@@ -580,28 +515,25 @@ export const subscribeToRoom = (roomId: string, callback: (room: Room | null) =>
 
 // ============ SUBMISSION FUNCTIONS ============
 
-const parseSubmissionData = (id: string, data: DocumentData): Submission => {
-  return {
-    id,
-    roomId: data.roomId || '',
-    roomCode: data.roomCode || '',
-    examId: data.examId || '',
-    student: data.student || { id: '', name: '' },
-    answers: data.answers || {},
-    score: data.score || 0,
-    correctCount: data.correctCount || 0,
-    wrongCount: data.wrongCount || 0,
-    totalQuestions: data.totalQuestions || 0,
-    percentage: data.percentage || 0,
-    startedAt: toDate(data.startedAt),
-    submittedAt: toDate(data.submittedAt),
-    duration: data.duration || 0,
-    status: data.status || 'in_progress'
-  };
-};
+const parseSubmissionData = (id: string, data: DocumentData): Submission => ({
+  id,
+  roomId: data.roomId || '',
+  roomCode: data.roomCode || '',
+  examId: data.examId || '',
+  student: data.student || { id: '', name: '' },
+  answers: data.answers || {},
+  score: data.score || 0,
+  correctCount: data.correctCount || 0,
+  wrongCount: data.wrongCount || 0,
+  totalQuestions: data.totalQuestions || 0,
+  percentage: data.percentage || 0,
+  startedAt: toDate(data.startedAt),
+  submittedAt: toDate(data.submittedAt),
+  duration: data.duration || 0,
+  status: data.status || 'in_progress'
+});
 
 export const createSubmission = async (submission: Omit<Submission, 'id'>): Promise<string> => {
-  // đảm bảo guest/anonymous có auth để ghi Firestore ổn định
   await ensureGuestSignedIn();
 
   const submissionRef = await addDoc(collection(db, 'submissions'), {
@@ -609,7 +541,6 @@ export const createSubmission = async (submission: Omit<Submission, 'id'>): Prom
     startedAt: serverTimestamp()
   });
 
-  // Update room total students counter
   const roomRef = doc(db, 'rooms', submission.roomId);
   const roomSnap = await getDoc(roomRef);
   if (roomSnap.exists()) {
@@ -637,17 +568,14 @@ export const submitExam = async (
   const submissionSnap = await getDoc(submissionRef);
 
   if (!submissionSnap.exists()) throw new Error('Submission not found');
-
   const submissionData = submissionSnap.data();
 
-  // Calculate score
   let correctCount = 0;
   const totalQuestions = exam.questions.length;
 
   exam.questions.forEach((q: Question) => {
     const userAnswer = answers[q.number];
     const correctAnswer = q.correctAnswer;
-
     if (!userAnswer || !correctAnswer) return;
 
     if (q.type === 'writing') {
@@ -659,9 +587,7 @@ export const submitExam = async (
           .replace(/[.,!?;:]/g, '')
           .trim();
 
-      if (normalize(userAnswer) === normalize(correctAnswer)) {
-        correctCount++;
-      }
+      if (normalize(userAnswer) === normalize(correctAnswer)) correctCount++;
     } else {
       if (userAnswer.toUpperCase() === correctAnswer.toUpperCase()) correctCount++;
     }
@@ -692,7 +618,6 @@ export const submitExam = async (
 
   await updateDoc(submissionRef, updatedData);
 
-  // Update room submitted count
   const roomRef = doc(db, 'rooms', submissionData.roomId);
   const roomSnap = await getDoc(roomRef);
   if (roomSnap.exists()) {
@@ -725,15 +650,13 @@ export const submitExam = async (
 export const getSubmission = async (submissionId: string): Promise<Submission | null> => {
   const submissionRef = doc(db, 'submissions', submissionId);
   const submissionSnap = await getDoc(submissionRef);
-
-  if (submissionSnap.exists()) return parseSubmissionData(submissionSnap.id, submissionSnap.data());
-  return null;
+  if (!submissionSnap.exists()) return null;
+  return parseSubmissionData(submissionSnap.id, submissionSnap.data());
 };
 
 export const getSubmissionsByRoom = async (roomId: string): Promise<Submission[]> => {
   const q = query(collection(db, 'submissions'), where('roomId', '==', roomId));
   const snapshot = await getDocs(q);
-
   const submissions = snapshot.docs.map((docSnap) => parseSubmissionData(docSnap.id, docSnap.data()));
   return submissions.sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
 };
@@ -744,37 +667,33 @@ export const getStudentSubmission = async (roomId: string, studentId: string): P
     where('roomId', '==', roomId),
     where('student.id', '==', studentId)
   );
-
   const snapshot = await getDocs(q);
   if (snapshot.empty) return null;
-
-  const docSnap = snapshot.docs[0];
-  return parseSubmissionData(docSnap.id, docSnap.data());
+  return parseSubmissionData(snapshot.docs[0].id, snapshot.docs[0].data());
 };
 
 export const subscribeToSubmissions = (roomId: string, callback: (submissions: Submission[]) => void) => {
   const q = query(collection(db, 'submissions'), where('roomId', '==', roomId));
-
   return onSnapshot(q, (snapshot) => {
     const submissions = snapshot.docs.map((docSnap) => parseSubmissionData(docSnap.id, docSnap.data()));
-
     submissions.sort((a, b) => {
       if ((b.percentage || 0) !== (a.percentage || 0)) return (b.percentage || 0) - (a.percentage || 0);
       return (b.submittedAt?.getTime() || 0) - (a.submittedAt?.getTime() || 0);
     });
-
     callback(submissions);
   });
 };
 
-// ============ EXPORTS (giữ lại để các file khác đang import không bị hỏng) ============
-
+// ============ EXPORTS ============
+// ✅ export thêm orderBy/limit để tương thích code cũ
 export {
   onAuthStateChanged,
   collection,
   query,
   where,
   getDocs,
+  orderBy,
+  limit,
   Timestamp,
   serverTimestamp,
   addDoc,
