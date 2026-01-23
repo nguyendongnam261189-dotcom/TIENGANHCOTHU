@@ -6,12 +6,19 @@ export enum Role {
   ADMIN = 'admin',
   MEMBER = 'member',
   DEPUTY = 'deputy',
-  LEADER = 'leader'
+  LEADER = 'leader',
+  // (Optional) nếu sau này muốn tạo doc user cho khách/anonymous
+  GUEST = 'guest'
 }
+
+// ============ ACCESS MODE ============
+// public  : cho phép vào làm không cần Gmail (khách)
+// verified: bắt buộc xác thực Gmail + (tuỳ logic code) isApproved=true
+export type AccessMode = 'public' | 'verified';
 
 // ============ QUESTION TYPES ============
 
-export type QuestionType = 
+export type QuestionType =
   | 'multiple_choice'   // Trắc nghiệm nhiều lựa chọn (PHẦN 1)
   | 'true_false'        // Đúng sai (PHẦN 2)
   | 'short_answer'      // Trả lời ngắn (PHẦN 3)
@@ -37,8 +44,27 @@ export interface User {
   avatar?: string;
   role: Role;
   status?: 'online' | 'offline' | 'busy';
+
+  // Đồng bộ theo app Toán: học sinh/giáo viên có thể cần duyệt
   isApproved?: boolean;
+
+  // Thêm để hỗ trợ "Tạo lớp" giống app Toán
+  classIds?: string[]; // danh sách classId mà user thuộc về (optional để không phá data cũ)
+
   createdAt?: Date;
+  updatedAt?: Date;
+}
+
+// ============ CLASS (for English app - giống app Toán) ============
+// Optional: sẽ dùng khi bạn muốn thêm tính năng "Tạo lớp" trong app Tiếng Anh.
+export interface Class {
+  id: string;
+  name: string;           // tên lớp (vd: 12A1, 10C2, BeeClass-IELTS-01...)
+  description?: string;
+  teacherId: string;      // uid GV tạo lớp
+  teacherName?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 // ============ QUESTION & OPTIONS ============
@@ -119,6 +145,16 @@ export interface Room {
   examTitle: string;
   teacherId: string;
   teacherName: string;
+
+  // ✅ Thêm chế độ truy cập: public/verified
+  // - Không có field này (room cũ) => code sẽ default là 'public' hoặc 'verified' tuỳ bạn đặt trong code.
+  accessMode?: AccessMode;
+
+  // ✅ Chuẩn bị cho tính năng lớp học (optional)
+  // Nếu room gắn với lớp nào đó, chỉ học sinh thuộc lớp và/hoặc đã duyệt mới vào được (logic sẽ làm ở code)
+  classId?: string;
+  className?: string;
+
   status: 'waiting' | 'active' | 'closed';
   startTime?: Date;
   endTime?: Date;
